@@ -59,6 +59,7 @@ dmypy.json
 database.env
 .env
 
-
 #data
 data/
+download/
+extraction/

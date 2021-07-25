@@ -22,4 +22,4 @@ unzip -o -d "$DIR_DOWNLOAD" "$DIR_DOWNLOAD/$CTGOV_FILE_NAME"
 set -e
 
 echo "Starting docker-compose postgres db and extract data with scripts/ctgov/01-init.sh"
-docker-compose --env-file ".env"
+docker-compose --env-file ".env" up
