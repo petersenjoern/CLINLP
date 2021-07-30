@@ -55,4 +55,4 @@ GROUP BY
 ORDER BY
     3 DESC
 "
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -c "\copy (${QUERY}) to '/data/ctgov/extraction/test22.csv' with csv"
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -c "\copy (${QUERY}) to '/data/ctgov/extraction/trial_overview1.csv' with csv"
