@@ -37,7 +37,7 @@ QUERY="
       ${LIMIT}"
 
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -c "\copy (${QUERY}) to '/data/ctgov/extraction/clinical_trials_similar.csv' with csv"
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -c "\copy (${QUERY}) to '/data/ctgov/extraction/clinical_trials_similar.csv' with header csv"
 
 # Extract non-COVID-19 related trials
 SIMILAR="NOT SIMILAR"
@@ -74,5 +74,5 @@ QUERY="
   LIMIT
       ${LIMIT}"
 
-      
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -c "\copy (${QUERY}) to '/data/ctgov/extraction/clinical_trials_not_similar.csv' with csv"
+
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" -c "\copy (${QUERY}) to '/data/ctgov/extraction/clinical_trials_not_similar.csv' with header csv"
