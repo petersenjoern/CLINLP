@@ -5,12 +5,21 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "ner.py",
+            "name": "ner",
             "type": "python",
             "request": "launch",
             "mode": "debug",
             "program": "${workspaceFolder}/src/ner/ner.py",
             "console": "integratedTerminal"
+        },
+        {
+            "name": "preprocess ner",
+            "type": "python",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/src/ner/preprocess.py",
+            "console": "integratedTerminal"
         }
+
     ]
 }
