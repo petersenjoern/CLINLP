@@ -1,6 +1,6 @@
 import pathlib
 from typing import List, Any
-from transformers import AutoTokenizer, AutoModel, BatchEncoding,AdamW
+from transformers import AutoTokenizer, AutoModel, BatchEncoding,AdamW, BertForTokenClassification
 from tokenizers import Encoding
 from datasets import load_dataset
 import itertools
@@ -213,9 +213,9 @@ class TraingingBatch:
         self.input_ids: torch.Tensor
         self.attention_masks: torch.Tensor
         self.labels: torch.Tensor
-        input_ids: IntListList = []
-        masks: IntListList = []
-        labels: IntListList = []
+        input_ids: List[int] = []
+        masks: List[int] = []
+        labels: List[int] = []
         for ex in examples:
             input_ids.append(ex.input_ids)
             masks.append(ex.attention_masks)
@@ -224,7 +224,7 @@ class TraingingBatch:
         self.attention_masks = torch.LongTensor(masks)
         self.labels = torch.LongTensor(labels)
 
-model = AutoModel.from_pretrained("dmis-lab/biobert-base-cased-v1.1", num_labels=len(ds.label_set.ids_to_label.values()))
+model = BertForTokenClassification.from_pretrained("dmis-lab/biobert-base-cased-v1.1", num_labels=len(ds.label_set.ids_to_label.values()))
 optimizer = AdamW(model.parameters(), lr=5e-6)
 
 dataloader = DataLoader(
@@ -234,32 +234,11 @@ dataloader = DataLoader(
     shuffle=True,
 )
 for num, batch in enumerate(dataloader):
-    loss, logits = model(
+    outputs = model(
         input_ids=batch.input_ids,
         attention_mask=batch.attention_masks,
         labels=batch.labels,
     )
-    loss.backward()
+    outputs.loss.backward()
     optimizer.step()
-    print(loss)
-
-# data = load_dataset('csv', data_files={"train": [str(PATH_DATA_NER_TRAIN)]})
-# print(dir(data))
-# print(len(data["train"]))
-# print(data["train"][0])
-exit(-1)
-
-
-# Tokenize and covert into ids
-tokenized_sequence = tokenizer.tokenize(sequence_a)
-print(tokenized_sequence)
-inputs = tokenizer(sequence_a)
-encoded_sequence = inputs["input_ids"]
-print(encoded_sequence)
-
-# tokenize, covert to ids, padding and attention masking (which ids to pay attention to)
-padded_sequences = tokenizer([sequence_a, sequence_b], padding=True)
-print(padded_sequences)
-
-inputs = tokenizer([sequence_a, sequence_b], padding="max_length", truncation=True)
-print(inputs)
+    print(outputs.loss)
