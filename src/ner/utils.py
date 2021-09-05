@@ -7,7 +7,9 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 class LabelSet:
+    """ Align target labels with tokens"""
     def __init__(self, labels: List[str]):
+        """ Create BILU target labels"""
         self.labels_to_id = {}
         self.ids_to_label = {}
         self.labels_to_id["O"] = 0
@@ -72,7 +74,7 @@ class TraingDataset(Dataset):
     def __init__(
         self,
         data: Any,
-        label_set: LabelSet,
+        label_set: LabelSet, #BILU target labels
         tokenizer: AutoTokenizer,
         tokens_per_batch=32,
         window_stride=None,
@@ -88,6 +90,7 @@ class TraingDataset(Dataset):
         self.texts = []
         self.annotations = []
 
+        # Move up in loop above
         for example in data:
             self.texts.append(example["content"])
             self.annotations.append(example["annotations"])
@@ -137,7 +140,6 @@ class TraingDataset(Dataset):
         return len(self.training_examples)
 
     def __getitem__(self, idx) -> TrainingExample:
-
         return self.training_examples[idx]
 
 class TraingingBatch:
