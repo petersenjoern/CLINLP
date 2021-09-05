@@ -63,3 +63,6 @@ database.env
 data/
 download/
 extraction/
+
+#Tensorboard
+log/
