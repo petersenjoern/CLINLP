@@ -1,11 +1,12 @@
 import pathlib
+import torch
 from utils import LabelSet, TraingDataset, TraingingBatch
 from transformers import AutoTokenizer, AdamW, BertForTokenClassification
 from torch.utils.data.dataloader import DataLoader
 from torch.profiler import profile as tprofiler
 from torch.profiler import schedule, tensorboard_trace_handler
 from preprocess import convert_tsv_to_conll_format
-
+import torch.nn.functional as F
 
 # Load data
 PATH_BASE = pathlib.Path.cwd()
@@ -34,21 +35,21 @@ optimizer = AdamW(model.parameters(), lr=5e-6)
 trainloader = DataLoader(
     trainset,
     collate_fn=TraingingBatch,
-    batch_size=4,
+    batch_size=32,
     shuffle=True,
 )
 
 testloader = DataLoader(
     testset,
     collate_fn=TraingingBatch,
-    batch_size=4,
+    batch_size=32,
     shuffle=True,
 )
 
 
-def train(data):
+def train(batch):
     """ training steps for each batch"""
-    inputs, masks, labels = data.input_ids, data.attention_masks, data.labels
+    inputs, masks, labels = batch.input_ids, batch.attention_masks, batch.labels
     outputs = model(
         input_ids=inputs,
         attention_mask=masks,
@@ -56,7 +57,12 @@ def train(data):
     )
     outputs.loss.backward()
     optimizer.step()
+    logits = outputs.logits.detach().cpu().numpy()
+    label_ids = labels.to('cpu').numpy()
     print(outputs.loss)
+
+    return logits, label_ids
+
 
 
 
@@ -66,21 +72,12 @@ with tprofiler(
         record_shapes=True,
         with_stack=True
 ) as prof:
+    predictions , true_labels = [], []
     for step, batch_data in enumerate(trainloader):
-        if step >= (1 + 1 + 3) * 2:
+        if step >= (1 + 1 + 3) * 1:
             break
-        train(batch_data)
+        logits, label_ids = train(batch_data)
+        predictions.append(logits)
+        true_labels.append(label_ids)
         prof.step()
-
-
-
-# save
-# for num, batch in enumerate(trainloader):
-#     outputs = model(
-#         input_ids=batch.input_ids,
-#         attention_mask=batch.attention_masks,
-#         labels=batch.labels,
-#     )
-#     outputs.loss.backward()
-#     optimizer.step()
-#     print(outputs.loss)
+        print(F.softmax(torch.tensor(logits), dim=-1))
