@@ -1,3 +1,4 @@
+#%%
 import pathlib
 import torch
 from utils import LabelSet, TraingDataset, TraingingBatch
@@ -8,9 +9,13 @@ from torch.profiler import schedule, tensorboard_trace_handler
 from preprocess import convert_tsv_to_conll_format
 import torch.nn.functional as F
 
+# configuration
+BATCH_SIZE = 256
+EPOCHS = 20
+DEVICE = "cuda:1" if torch.cuda.is_available() else "cpu"
+#%%
 # Load data
 PATH_BASE = pathlib.Path.cwd()
-PATH_DATA_CTGOV_TRIALS = PATH_BASE.joinpath("data", "ctgov", "extraction", "clinical_trials_similar.csv")
 PATH_DATA_NER = PATH_BASE.joinpath("data", "ner")
 PATH_DATA_NER_TRAIN = PATH_DATA_NER.joinpath("train_processed_medical_ner.tsv")
 PATH_DATA_NER_TEST = PATH_DATA_NER.joinpath("test_processed_medical_ner.tsv")
@@ -29,20 +34,20 @@ testset = TraingDataset(
     data=data_test.preprocessed, tokenizer=tokenizer, label_set=label_set_train, tokens_per_batch=32
 )
 
-model = BertForTokenClassification.from_pretrained("dmis-lab/biobert-base-cased-v1.1", num_labels=len(trainset.label_set.ids_to_label.values()))
+model = BertForTokenClassification.from_pretrained("dmis-lab/biobert-base-cased-v1.1", num_labels=len(trainset.label_set.ids_to_label.values())).to(DEVICE)
 optimizer = AdamW(model.parameters(), lr=5e-6)
 
 trainloader = DataLoader(
     trainset,
     collate_fn=TraingingBatch,
-    batch_size=32,
+    batch_size=BATCH_SIZE,
     shuffle=True,
 )
 
 testloader = DataLoader(
     testset,
     collate_fn=TraingingBatch,
-    batch_size=32,
+    batch_size=BATCH_SIZE,
     shuffle=True,
 )
 
@@ -58,12 +63,9 @@ def train(batch):
     outputs.loss.backward()
     optimizer.step()
     logits = outputs.logits
-    label_ids = labels
     # logits = outputs.logits.detach().cpu().numpy()
     # label_ids = labels.to('cpu').numpy()
-    print(outputs.loss)
-
-    return logits, label_ids
+    return logits, labels, outputs.loss
 
 
 
@@ -75,12 +77,22 @@ with tprofiler(
         with_stack=True
 ) as prof:
     predictions , true_labels = [], []
-    for step, batch_data in enumerate(trainloader):
-        if step >= (1 + 1 + 3) * 10:
-            break
-            print(logits)
-        logits, label_ids = train(batch_data)
-        predictions.append(logits)
-        true_labels.append(label_ids)
-        prof.step()
-        # print(F.softmax(torch.tensor(logits), dim=-1))
+    for epoch in range(EPOCHS):
+        print("\nStart of epoch %d" % (epoch,))
+        for step, batch_data in enumerate(trainloader):
+            logits, labels, loss_value = train(batch_data)
+            predictions.append(logits)
+            true_labels.append(labels)
+            prof.step()
+            # print(F.softmax(torch.tensor(logits), dim=-1))
+
+            # Log every 200 batches.
+            if step % 200 == 0:
+                print(
+                    "Training loss (for one batch) at step %d: %.4f"
+                    % (step, float(loss_value))
+                )
+                print("Seen so far: %s samples" % ((step + 1) * BATCH_SIZE))
+
+            if (loss_value <= 1.0) or epoch >= 7:
+                break
