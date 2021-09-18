@@ -1,5 +1,6 @@
 #%%
 import pathlib
+from typing import List
 import torch
 from utils import LabelSet, TraingDataset, TraingingBatch
 from transformers import AutoTokenizer, AdamW, BertForTokenClassification
@@ -35,6 +36,9 @@ testset = TraingDataset(
 )
 
 model = BertForTokenClassification.from_pretrained("dmis-lab/biobert-base-cased-v1.1", num_labels=len(trainset.label_set.ids_to_label.values())).to(DEVICE)
+model.config.id2label = label_set_train["ids_to_label"]
+model.config.label2id = label_set_train["labels_to_id"]
+num_labels = len(label_set_train["ids_to_label"])
 optimizer = AdamW(model.parameters(), lr=5e-6)
 
 trainloader = DataLoader(
@@ -52,47 +56,68 @@ testloader = DataLoader(
 )
 
 
-def train(batch):
-    """ training steps for each batch"""
-    inputs, masks, labels = batch.input_ids, batch.attention_masks, batch.labels
-    outputs = model(
-        input_ids=inputs,
-        attention_mask=masks,
-        labels=labels,
-    )
-    outputs.loss.backward()
-    optimizer.step()
-    logits = outputs.logits
-    # logits = outputs.logits.detach().cpu().numpy()
-    # label_ids = labels.to('cpu').numpy()
-    return logits, labels, outputs.loss
-
-
-
-
 with tprofiler(
         schedule=schedule(wait=1, warmup=1, active=3, repeat=2),
         on_trace_ready=tensorboard_trace_handler('./data/tensorboard/log/BertForTokenClassification'),
         record_shapes=True,
         with_stack=True
 ) as prof:
-    predictions , true_labels = [], []
+    train_loss = []
     for epoch in range(EPOCHS):
         print("\nStart of epoch %d" % (epoch,))
-        for step, batch_data in enumerate(trainloader):
-            logits, labels, loss_value = train(batch_data)
-            predictions.append(logits)
-            true_labels.append(labels)
-            prof.step()
-            # print(F.softmax(torch.tensor(logits), dim=-1))
-
+        current_loss = 0
+        for step, batch in enumerate(trainloader):
+            # move the batch tensors to the same device as the model
+            batch.attention_masks = batch.attention_masks.to(DEVICE)
+            batch.input_ids = batch.input_ids.to(DEVICE)
+            batch.labels = batch.labels.to(DEVICE)
+            # send 'input_ids', 'attention_mask' and 'labels' to the model
+            outputs = model(
+                input_ids=batch.input_ids,
+                attention_mask=batch.attention_masks,
+                labels=batch.labels,
+            )
+            # the outputs are of shape (loss, logits)
+            loss = outputs[0]
+            # with the .backward method it calculates all 
+            # of  the gradients used for autograd
+            loss.backward()
+            # NOTE: if we append `loss` (a tensor) we will force the GPU to save
+            # the loss into its memory, potentially filling it up. To avoid this
+            # we rather store its float value, which can be accessed through the
+            # `.item` method
+            current_loss += loss.item()
+            if step % 8 == 0 and step > 0:
+                # update the model using the optimizer
+                optimizer.step()
+                # once we update the model we set the gradients to zero
+                optimizer.zero_grad()
+                # store the loss value for visualization
+                train_loss.append(current_loss / 32)
+                print(current_loss)
+                current_loss = 0
+            
             # Log every 200 batches.
             if step % 200 == 0:
-                print(
-                    "Training loss (for one batch) at step %d: %.4f"
-                    % (step, float(loss_value))
-                )
-                print("Seen so far: %s samples" % ((step + 1) * BATCH_SIZE))
+                confusion = torch.zeros(num_labels, num_labels)
+                # get the sentence lengths
+                s_lengths = batch.attention_masks.sum(dim=1)
+                # iterate through the examples
+                for idx, length in enumerate(s_lengths):
+                    # get the true values
+                    true_values = batch.labels[idx][:length]
+                    # get the predicted values
+                    pred_values = torch.argmax(outputs[1], dim=2)[idx][:length]
+                    # go through all true and predicted values and store them in the confusion matrix
+                    for true, pred in zip(true_values, pred_values):
+                        confusion[true.item()][pred.item()] += 1
+                    # Normalize by dividing every row by its sum
+                    for i in range(num_labels):
+                        confusion[i] = confusion[i] / confusion[i].sum()
 
-            if (loss_value <= 1.0) or epoch >= 7:
-                break
+
+        # update the model one last time for this epoch
+        optimizer.step()
+        optimizer.zero_grad()
+        # visual check after each epoch to see if we are improving in predicting the different cats
+        print(torch.diagonal(confusion, 0))

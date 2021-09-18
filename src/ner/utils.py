@@ -23,6 +23,9 @@ class LabelSet:
             self.ids_to_label[num] = l
         # Add the OUTSIDE label - no label for the token
     
+    def __getitem__(self, item):
+        return getattr(self, item)
+
     def align_tokens_and_annotations_bilou(self, tokenized, annotations):
         tokens = tokenized.tokens
         aligned_labels = ["O"] * len(
@@ -157,6 +160,6 @@ class TraingingBatch:
             input_ids.append(ex.input_ids)
             masks.append(ex.attention_masks)
             labels.append(ex.labels)
-        self.input_ids = torch.LongTensor(input_ids).to('cuda:1')
-        self.attention_masks = torch.LongTensor(masks).to('cuda:1')
-        self.labels = torch.LongTensor(labels).to('cuda:1')
+        self.input_ids = torch.LongTensor(input_ids)
+        self.attention_masks = torch.LongTensor(masks)
+        self.labels = torch.LongTensor(labels)
