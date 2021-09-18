@@ -57,8 +57,10 @@ def train(batch):
     )
     outputs.loss.backward()
     optimizer.step()
-    logits = outputs.logits.detach().cpu().numpy()
-    label_ids = labels.to('cpu').numpy()
+    logits = outputs.logits
+    label_ids = labels
+    # logits = outputs.logits.detach().cpu().numpy()
+    # label_ids = labels.to('cpu').numpy()
     print(outputs.loss)
 
     return logits, label_ids
@@ -74,10 +76,11 @@ with tprofiler(
 ) as prof:
     predictions , true_labels = [], []
     for step, batch_data in enumerate(trainloader):
-        if step >= (1 + 1 + 3) * 1:
+        if step >= (1 + 1 + 3) * 10:
             break
+            print(logits)
         logits, label_ids = train(batch_data)
         predictions.append(logits)
         true_labels.append(label_ids)
         prof.step()
-        print(F.softmax(torch.tensor(logits), dim=-1))
+        # print(F.softmax(torch.tensor(logits), dim=-1))
