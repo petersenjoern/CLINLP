@@ -1,6 +1,6 @@
 #%%
 import pathlib
-from typing import List
+from typing import Dict, Iterator, List
 import torch
 from utils import LabelSet, TraingDataset, TraingingBatch
 from transformers import AutoTokenizer, AdamW, BertForTokenClassification
@@ -8,7 +8,8 @@ from torch.utils.data.dataloader import DataLoader
 from torch.profiler import profile as tprofiler
 from torch.profiler import schedule, tensorboard_trace_handler
 from preprocess import convert_tsv_to_conll_format
-import torch.nn.functional as F
+from sklearn.metrics import classification_report
+from collections import defaultdict
 
 # configuration
 BATCH_SIZE = 256
@@ -55,6 +56,85 @@ testloader = DataLoader(
     shuffle=True,
 )
 
+def prepare_batch_for_metrics(batch: TraingingBatch, predictions:torch.Tensor):
+        # get the sentence lengths
+        s_lengths = batch.attention_masks.sum(dim=1)
+        # iterate through the examples
+        batch_true_values = []
+        batch_pred_values = []
+        for idx, length in enumerate(s_lengths):
+            # get the true values
+            true_values = batch.labels[idx][:length].tolist()
+            batch_true_values.extend(true_values)
+            # get the predicted values
+            pred_values = torch.argmax(predictions, dim=2)[idx][:length].tolist()
+            batch_pred_values.extend(pred_values)
+        return batch_true_values, batch_pred_values
+
+def bilu_to_non_bilu(iterat: Iterator) -> Dict[str, List[int]]:
+    """Prepare non BILU labels mapping to ids"""
+    tally = defaultdict(list)
+    for i,item in enumerate(iterat):
+        tally[item].append(i)
+    return dict([(key,locs) for key,locs in tally.items()])
+
+def remove_bilu(bilu_labels: List[str], true_values: List[int], pred_values: List[int]):
+    """Remove the BILU tagging of the labels"""
+    wo_bilu = [bilu_label.split("-")[-1] for bilu_label in bilu_labels]
+    non_bilu_mapping = bilu_to_non_bilu(wo_bilu)
+
+    non_bilu_mapping = {}
+    non_bilu_target_to_label = {}
+    for target_name, labels_list in non_bilu_mapping.items():
+        # 'upper_bound': ([1, 2, 3, 4], 1)
+        non_bilu_mapping[target_name] = labels_list, labels_list[0]
+        # 'upper_bound': 1
+        non_bilu_target_to_label[target_name] = labels_list[0]
+    
+    for val in true_values:
+        for _, (labels_list, non_bilu_value) in non_bilu_mapping.items():
+            if val in labels_list:
+                val = non_bilu_value
+    
+    for val in pred_values:
+        for _, (labels_list, non_bilu_value) in non_bilu_mapping.items():
+            if val in labels_list:
+                val = non_bilu_value
+
+    return list(non_bilu_target_to_label.keys()), list(non_bilu_target_to_label.values()), true_values, pred_values
+
+
+def get_multilabel_metrics(true_values: List[int], pred_values: List[int], labelset: LabelSet):
+
+        labels = list(labelset["ids_to_label"].keys())
+        target_names = list(labelset["ids_to_label"].values())
+        target_names, labels, true_values, pred_values = remove_bilu(target_names, true_values, pred_values)
+        metrics = classification_report(
+            y_true=true_values, y_pred=pred_values, 
+            labels=labels, target_names=target_names, output_dict=True, zero_division=0
+        )
+        return metrics
+
+def get_confusion_matrix(num_labels:int, normalize:bool, batch) -> torch.Tensor:
+        """Evaluate a batch with a confusion matrix"""
+        confusion_matrix = torch.zeros(num_labels, num_labels)
+        # get the sentence lengths
+        s_lengths = batch.attention_masks.sum(dim=1)
+        # iterate through the examples
+        for idx, length in enumerate(s_lengths):
+            # get the true values
+            true_values = batch.labels[idx][:length]
+            # get the predicted values
+            pred_values = torch.argmax(outputs[1], dim=2)[idx][:length]
+            # go through all true and predicted values and store them in the confusion matrix
+            for true, pred in zip(true_values, pred_values):
+                confusion_matrix[true.item()][pred.item()] += 1
+            if normalize:
+                # Normalize by dividing every row by its sum
+                for i in range(num_labels):
+                    confusion_matrix[i] = confusion_matrix[i] / confusion_matrix[i].sum()
+        return confusion_matrix
+
 
 with tprofiler(
         schedule=schedule(wait=1, warmup=1, active=3, repeat=2),
@@ -66,6 +146,8 @@ with tprofiler(
     for epoch in range(EPOCHS):
         print("\nStart of epoch %d" % (epoch,))
         current_loss = 0
+        epoch_true_sample_values = []
+        epoch_pred_sample_values = []
         for step, batch in enumerate(trainloader):
             # move the batch tensors to the same device as the model
             batch.attention_masks = batch.attention_masks.to(DEVICE)
@@ -97,27 +179,42 @@ with tprofiler(
                 print(current_loss)
                 current_loss = 0
             
-            # Log every 200 batches.
-            if step % 200 == 0:
-                confusion = torch.zeros(num_labels, num_labels)
-                # get the sentence lengths
-                s_lengths = batch.attention_masks.sum(dim=1)
-                # iterate through the examples
-                for idx, length in enumerate(s_lengths):
-                    # get the true values
-                    true_values = batch.labels[idx][:length]
-                    # get the predicted values
-                    pred_values = torch.argmax(outputs[1], dim=2)[idx][:length]
-                    # go through all true and predicted values and store them in the confusion matrix
-                    for true, pred in zip(true_values, pred_values):
-                        confusion[true.item()][pred.item()] += 1
-                    # Normalize by dividing every row by its sum
-                    for i in range(num_labels):
-                        confusion[i] = confusion[i] / confusion[i].sum()
+            # Log every 50 batches.
+            if step % 50 == 0:
+            #     confusion = get_confusion_matrix(num_labels=num_labels, normalize=True, batch=batch)
+            #     print(torch.diagonal(confusion, 0))
+                batch_true_values, batch_pred_values = prepare_batch_for_metrics(batch=batch, predictions=outputs[1])
+                epoch_true_sample_values.extend(batch_true_values)
+                epoch_pred_sample_values.extend(batch_pred_values)
+                metrics = get_multilabel_metrics(epoch_true_sample_values, epoch_pred_sample_values, label_set_train)
 
 
         # update the model one last time for this epoch
         optimizer.step()
         optimizer.zero_grad()
-        # visual check after each epoch to see if we are improving in predicting the different cats
-        print(torch.diagonal(confusion, 0))
+        metrics = get_multilabel_metrics(epoch_true_sample_values, epoch_pred_sample_values, label_set_train)
+        print(metrics)
+
+
+# Evaluate on test dataset
+model = model.eval()
+epoch_true_sample_values = []
+epoch_pred_sample_values = []
+for step, batch in enumerate(testloader):
+    # do not calculate the gradients
+    with torch.no_grad():
+        # move the batch tensors to the same device as the model
+        batch.attention_masks = batch.attention_masks.to(DEVICE)
+        batch.input_ids = batch.input_ids.to(DEVICE)
+        batch.labels = batch.labels.to(DEVICE)
+        # send 'input_ids', 'attention_mask' and 'labels' to the model
+        outputs = model(
+            input_ids=batch.input_ids,
+            attention_mask=batch.attention_masks,
+            labels=batch.labels,
+        )
+        batch_true_values, batch_pred_values = prepare_batch_for_metrics(batch=batch, predictions=outputs[1])
+        epoch_true_sample_values.extend(batch_true_values)
+        epoch_pred_sample_values.extend(batch_pred_values)
+metrics = get_multilabel_metrics(epoch_true_sample_values, epoch_pred_sample_values, label_set_train)
+print(metrics)
