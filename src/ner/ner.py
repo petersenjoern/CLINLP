@@ -57,19 +57,19 @@ testloader = DataLoader(
 )
 
 def prepare_batch_for_metrics(batch: TraingingBatch, predictions:torch.Tensor):
-        # get the sentence lengths
-        s_lengths = batch.attention_masks.sum(dim=1)
-        # iterate through the examples
-        batch_true_values = []
-        batch_pred_values = []
-        for idx, length in enumerate(s_lengths):
-            # get the true values
-            true_values = batch.labels[idx][:length].tolist()
-            batch_true_values.extend(true_values)
-            # get the predicted values
-            pred_values = torch.argmax(predictions, dim=2)[idx][:length].tolist()
-            batch_pred_values.extend(pred_values)
-        return batch_true_values, batch_pred_values
+    # get the sentence lengths
+    s_lengths = batch.attention_masks.sum(dim=1)
+    # iterate through the examples
+    batch_true_values = []
+    batch_pred_values = []
+    for idx, length in enumerate(s_lengths):
+        # get the true values
+        true_values = batch.labels[idx][:length].tolist()
+        batch_true_values.extend(true_values)
+        # get the predicted values
+        pred_values = torch.argmax(predictions, dim=2)[idx][:length].tolist()
+        batch_pred_values.extend(pred_values)
+    return batch_true_values, batch_pred_values
 
 def bilu_to_non_bilu(iterat: Iterator) -> Dict[str, List[int]]:
     """Prepare non BILU labels mapping to ids"""
@@ -80,40 +80,41 @@ def bilu_to_non_bilu(iterat: Iterator) -> Dict[str, List[int]]:
 
 def remove_bilu(bilu_labels: List[str], true_values: List[int], pred_values: List[int]):
     """Remove the BILU tagging of the labels"""
+    #TODO: create this mapping only once and not at very loop!
     wo_bilu = [bilu_label.split("-")[-1] for bilu_label in bilu_labels]
     non_bilu_mapping = bilu_to_non_bilu(wo_bilu)
 
-    non_bilu_mapping = {}
+    non_bilu_target_to_list_labels = {}
     non_bilu_target_to_label = {}
     for target_name, labels_list in non_bilu_mapping.items():
         # 'upper_bound': ([1, 2, 3, 4], 1)
-        non_bilu_mapping[target_name] = labels_list, labels_list[0]
+        non_bilu_target_to_list_labels[target_name] = labels_list, labels_list[0]
         # 'upper_bound': 1
         non_bilu_target_to_label[target_name] = labels_list[0]
     
-    for val in true_values:
-        for _, (labels_list, non_bilu_value) in non_bilu_mapping.items():
-            if val in labels_list:
-                val = non_bilu_value
+    for idx, label in enumerate(true_values):
+        for _, (labels_list, non_bilu_label) in non_bilu_target_to_list_labels.items():
+            if label in labels_list:
+                true_values[idx] = non_bilu_label
     
-    for val in pred_values:
-        for _, (labels_list, non_bilu_value) in non_bilu_mapping.items():
-            if val in labels_list:
-                val = non_bilu_value
+    for idx, label in enumerate(pred_values):
+        for _, (labels_list, non_bilu_label) in non_bilu_target_to_list_labels.items():
+            if label in labels_list:
+                pred_values[idx] = non_bilu_label
 
     return list(non_bilu_target_to_label.keys()), list(non_bilu_target_to_label.values()), true_values, pred_values
 
 
 def get_multilabel_metrics(true_values: List[int], pred_values: List[int], labelset: LabelSet):
-
-        labels = list(labelset["ids_to_label"].keys())
-        target_names = list(labelset["ids_to_label"].values())
-        target_names, labels, true_values, pred_values = remove_bilu(target_names, true_values, pred_values)
-        metrics = classification_report(
-            y_true=true_values, y_pred=pred_values, 
-            labels=labels, target_names=target_names, output_dict=True, zero_division=0
-        )
-        return metrics
+    "yyy"""
+    labels = list(labelset["ids_to_label"].keys())
+    target_names = list(labelset["ids_to_label"].values())
+    target_names, labels, true_values, pred_values = remove_bilu(target_names, true_values, pred_values)
+    metrics = classification_report(
+        y_true=true_values, y_pred=pred_values, 
+        labels=labels, target_names=target_names, output_dict=True, zero_division=0
+    )
+    return metrics
 
 def get_confusion_matrix(num_labels:int, normalize:bool, batch) -> torch.Tensor:
         """Evaluate a batch with a confusion matrix"""
@@ -133,6 +134,7 @@ def get_confusion_matrix(num_labels:int, normalize:bool, batch) -> torch.Tensor:
                 # Normalize by dividing every row by its sum
                 for i in range(num_labels):
                     confusion_matrix[i] = confusion_matrix[i] / confusion_matrix[i].sum()
+        print(torch.diagonal(confusion_matrix, 0))
         return confusion_matrix
 
 
@@ -181,17 +183,15 @@ with tprofiler(
             
             # Log every 50 batches.
             if step % 50 == 0:
-            #     confusion = get_confusion_matrix(num_labels=num_labels, normalize=True, batch=batch)
-            #     print(torch.diagonal(confusion, 0))
                 batch_true_values, batch_pred_values = prepare_batch_for_metrics(batch=batch, predictions=outputs[1])
                 epoch_true_sample_values.extend(batch_true_values)
                 epoch_pred_sample_values.extend(batch_pred_values)
-                metrics = get_multilabel_metrics(epoch_true_sample_values, epoch_pred_sample_values, label_set_train)
 
 
         # update the model one last time for this epoch
         optimizer.step()
         optimizer.zero_grad()
+        # visually inspect if metrics are improving over time
         metrics = get_multilabel_metrics(epoch_true_sample_values, epoch_pred_sample_values, label_set_train)
         print(metrics)
 
@@ -218,3 +218,11 @@ for step, batch in enumerate(testloader):
         epoch_pred_sample_values.extend(batch_pred_values)
 metrics = get_multilabel_metrics(epoch_true_sample_values, epoch_pred_sample_values, label_set_train)
 print(metrics)
+
+
+#TODO: create BILU mapping only once
+#TODO: create traindata and dataloder for train and test via function/ dynamically
+#TODO: log metrics to tensorboard
+#TODO: save trained model
+#TODO: build train and evaluate as funcs
+#TODO: extract predictions and add to output file incl. input incl/exl. criteria
