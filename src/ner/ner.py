@@ -210,4 +210,5 @@ def main(cfg: DictConfig) -> None:
 if __name__ == "__main__":
     main()
 
+#TODO investigate why BILU isnt removed in evaluation
 #TODO: extract predictions and add to output file incl. input incl/exl. criteria
