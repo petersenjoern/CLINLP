@@ -2,10 +2,20 @@
 Parsing Clinical and other biomedical data the smart way 
 
 ## 1. Download ctgov data and spin-up in a postgres db in docker
-bash ctgov <yyyymm01>
+```bash
+./ctgov <yyyymm01>
+```
 
-## 2. Run src/ner/ner.py
-python ner.py
+## 2. Fill in the Named Entity Recoginition configuration yaml
+```bash
+vi ./src/ner/config_ner.yaml
+```
+
+## 3. Run Named Entity Recognition by using Hydra CLI:
+```bash
+./src/ner/ner.py
+```
+
 
 ## Training with a GPU:
 

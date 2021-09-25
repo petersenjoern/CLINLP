@@ -189,21 +189,27 @@ def bilu_to_non_bilu(iterat: Iterator) -> Dict[str, List[int]]:
         tally[item].append(i)
     return dict([(key,locs) for key,locs in tally.items()])
 
-def ids_to_non_bilu_label_mapping(labelset: LabelSet) -> Tuple[Dict[int, Tuple[List[int], int]], Dict[str, int]]:
+@dataclass
+class BiluMappings:
+    non_bilu_label_to_bilu_ids: Dict[str, Tuple[List[int], int]]
+    non_bilu_label_to_id:  Dict[str, int]
+
+# Tuple[Dict[int, Tuple[List[int], int]], Dict[str, int]]
+def ids_to_non_bilu_label_mapping(labelset: LabelSet) -> BiluMappings:
     """Mapping from ids to BILU and non-BILU mapping. This is used to remove the BILU labels to regular labels"""
     target_names = list(labelset["ids_to_label"].values())
     wo_bilu = [bilu_label.split("-")[-1] for bilu_label in target_names]
     non_bilu_mapping = bilu_to_non_bilu(wo_bilu)
 
-    non_bilu_label_to_bilu_ids = {}
-    non_bilu_label_to_id = {}
+    BiluMappings.non_bilu_label_to_bilu_ids = {}
+    BiluMappings.non_bilu_label_to_id = {}
     for target_name, labels_list in non_bilu_mapping.items():
         # 'upper_bound': ([1, 2, 3, 4], 1)
-        non_bilu_label_to_bilu_ids[target_name] = labels_list, labels_list[0]
+        BiluMappings.non_bilu_label_to_bilu_ids[target_name] = labels_list, labels_list[0]
         # 'upper_bound': 1
-        non_bilu_label_to_id[target_name] = labels_list[0]
-
-    return non_bilu_label_to_bilu_ids, non_bilu_label_to_id
+        BiluMappings.non_bilu_label_to_id[target_name] = labels_list[0]
+    
+    return BiluMappings
 
 def remove_bilu_ids_from_true_and_pred_values(non_bilu_label_to_bilu_ids: Dict[int, Tuple[List[int], int]], 
     true_values: List[int], pred_values: List[int]) -> Tuple[List[int], List[int]]:

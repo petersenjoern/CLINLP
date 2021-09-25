@@ -67,3 +67,4 @@ extraction/
 #Tensorboard
 log/
 data/tensorboard/log
+outputs/

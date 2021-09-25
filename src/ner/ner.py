@@ -1,43 +1,35 @@
-#%%
+import json
 from pathlib import Path
+from typing import Tuple
 import torch
-from utils import LabelSet, TraingDataset, TraingingBatch, get_multilabel_metrics, ids_to_non_bilu_label_mapping, prepare_batch_for_metrics
+from omegaconf import DictConfig
+import hydra
+from utils import (LabelSet, TraingDataset, TraingingBatch, BiluMappings, get_multilabel_metrics,
+    ids_to_non_bilu_label_mapping, prepare_batch_for_metrics)
 from transformers import AutoTokenizer, AdamW, BertForTokenClassification, optimization
 from torch.utils.data.dataloader import DataLoader
 from torch.profiler import profile as tprofiler
 from torch.profiler import schedule, tensorboard_trace_handler
 from torch.utils.tensorboard import SummaryWriter
-from preprocess import convert_tsv_to_conll_format
+from preprocess import AnnotationsAndLabelsStruct, convert_tsv_to_conll_format
 
 
-# configuration
-BATCH_SIZE = 256
-EPOCHS = 5
-LR = 5e-6
-SHUFFLE = True
 DEVICE = "cuda:1" if torch.cuda.is_available() else "cpu"
-model_comment = f"bsize: {BATCH_SIZE},  lr: {LR} epochs: {EPOCHS}, shuffle: {SHUFFLE} device: {DEVICE}" 
-
-PATH_BASE = Path.cwd()
-PATH_DATA_NER = PATH_BASE.joinpath("data", "ner")
-PATH_DATA_NER_TRAIN = PATH_DATA_NER.joinpath("train_processed_medical_ner.tsv")
-PATH_DATA_NER_TEST = PATH_DATA_NER.joinpath("test_processed_medical_ner.tsv")
-PATH_FINEDTUNED_MODEL = PATH_DATA_NER.joinpath("model", "finedtuned_bert")
-PATH_TENSORBOARD_LOGS = PATH_BASE.joinpath("data", "tensorboard", "log", "BertForTokenClassification")
 
 
-def train(model: BertForTokenClassification, optimizer: optimization, dataloader: DataLoader,
-    epochs: int, bilu:bool, tensorboard_logs:Path, save_directory:Path=None):
+def train(cfg: DictConfig, model: BertForTokenClassification, optimizer: optimization, dataloader: DataLoader, labelset: LabelSet,
+    bilu_mappings: BiluMappings, save_directory:Path=None) -> BertForTokenClassification:
 
-    tb = SummaryWriter(log_dir=tensorboard_logs.joinpath("metrics"), filename_suffix="-summary", comment=model_comment)
-    # tb.add_graph(model)
+    model_comment = (f"bsize: {cfg.hyperparams.batch_size},  lr: {cfg.hyperparams.learning_rate}, "
+        f"epochs: {cfg.hyperparams.epochs}, shuffle: {cfg.hyperparams.shuffle} device: {DEVICE}")
+    tb = SummaryWriter(log_dir=cfg.caching.tensorboard_metrics, filename_suffix="-summary", comment=model_comment)
     with tprofiler(
             schedule=schedule(wait=1, warmup=1, active=3, repeat=2),
-            on_trace_ready=tensorboard_trace_handler(tensorboard_logs.joinpath("GPU")),
+            on_trace_ready=tensorboard_trace_handler(cfg.caching.tensorboard_profiler),
             record_shapes=True,
             with_stack=True,
     ) as prof:
-        for epoch in range(epochs):
+        for epoch in range(cfg.hyperparams.epochs):
             print("\nStart of epoch %d" % (epoch,))
             current_loss = 0
             epoch_true_sample_values = []
@@ -89,10 +81,10 @@ def train(model: BertForTokenClassification, optimizer: optimization, dataloader
             metrics = get_multilabel_metrics(
                 epoch_true_sample_values,
                 epoch_pred_sample_values,
-                non_bilu_label_to_bilu_ids,
-                non_bilu_label_to_id,
-                label_set_train,
-                bilu
+                bilu_mappings.non_bilu_label_to_bilu_ids,
+                bilu_mappings.non_bilu_label_to_id,
+                labelset,
+                cfg.model.evaluation.bilu
             )
             # Log the metrics to every epoch
             tb.add_scalar("Loss", loss.item(), epoch)
@@ -101,9 +93,10 @@ def train(model: BertForTokenClassification, optimizer: optimization, dataloader
             tb.add_scalar("F1-Score", metrics['weighted avg']["f1-score"], epoch)
     
     # record the final results with hyperparams used
-    #TODO: add the model configuration to it
     tb.add_hparams(
-        {"lr": LR, "bsize": BATCH_SIZE, "epochs":EPOCHS, "shuffle": SHUFFLE},
+        {
+            "lr": cfg.hyperparams.learning_rate, "bsize": cfg.hyperparams.batch_size,
+            "epochs":cfg.hyperparams.epochs, "shuffle": cfg.hyperparams.shuffle},
         {
             "precision": metrics['weighted avg']["precision"],
             "recall": metrics['weighted avg']["recall"],
@@ -116,11 +109,16 @@ def train(model: BertForTokenClassification, optimizer: optimization, dataloader
     return model
     
 
-def evaluate(model: BertForTokenClassification, dataloader: DataLoader, bilu:bool, load_directory:Path=None):
+def evaluate(cfg: DictConfig, model: BertForTokenClassification, dataloader: DataLoader, labelset:LabelSet,
+    bilu_mappings: BiluMappings, load_directory:Path=None, save_directory:Path=None) -> None:
     
     if not model:
-        torch.load(load_directory)
-    
+        if load_directory:
+            try:
+                model = torch.load(load_directory)
+            except:
+                raise Exception("Model couldnt be loaded under: %s", load_directory)
+        
     # Evaluate on test dataset
     model = model.eval() #equivalent to model.train(False)
     epoch_true_sample_values = []
@@ -144,61 +142,72 @@ def evaluate(model: BertForTokenClassification, dataloader: DataLoader, bilu:boo
     metrics = get_multilabel_metrics(
         epoch_true_sample_values,
         epoch_pred_sample_values,
-        non_bilu_label_to_bilu_ids,
-        non_bilu_label_to_id,
-        label_set_train,
-        bilu
+        bilu_mappings.non_bilu_label_to_bilu_ids,
+        bilu_mappings.non_bilu_label_to_id,
+        labelset,
+        cfg.model.evaluation.bilu
     )
+    if save_directory:
+        with open(save_directory, 'w') as outfile:
+            json.dump(metrics, outfile)
     print(metrics)
 
 
+def load_and_prepare(cfg: DictConfig) -> Tuple[AnnotationsAndLabelsStruct, AnnotationsAndLabelsStruct, BiluMappings]:
+    # Preparation
+    path_main = Path(__file__).parents[2]
+    data = convert_tsv_to_conll_format(
+        [path_main.joinpath(Path(cfg.datasets.train)), path_main.joinpath(Path(cfg.datasets.test))])
+    data_train = data[0]
+    data_test = data[1]
 
-# Execution
-# Preparation
-data = convert_tsv_to_conll_format([PATH_DATA_NER_TRAIN, PATH_DATA_NER_TEST])
-data_train = data[0]
-data_test = data[1]
+    label_set_train = LabelSet(labels=data_train.unique_labels)
+    bilu_mappings = ids_to_non_bilu_label_mapping(label_set_train)
+    return data_train, data_test, label_set_train, bilu_mappings
 
-tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.1")
-label_set_train = LabelSet(labels=data_train.unique_labels)
-non_bilu_label_to_bilu_ids, non_bilu_label_to_id = ids_to_non_bilu_label_mapping(label_set_train)
+@hydra.main(config_path=".", config_name="config_ner")
+def main(cfg: DictConfig) -> None:
+    (data_train, data_test, label_set_train, bilu_mappings) = load_and_prepare(cfg)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.name)
+    trainset = TraingDataset(
+        data=data_train.preprocessed, tokenizer=tokenizer,
+        label_set=label_set_train, tokens_per_batch=cfg.hyperparams.tokens_per_batch
+    )
+    testset = TraingDataset(
+        data=data_test.preprocessed, tokenizer=tokenizer,
+        label_set=label_set_train, tokens_per_batch=cfg.hyperparams.tokens_per_batch
+    )
 
-trainset = TraingDataset(
-    data=data_train.preprocessed, tokenizer=tokenizer, label_set=label_set_train, tokens_per_batch=32
-)
-testset = TraingDataset(
-    data=data_test.preprocessed, tokenizer=tokenizer, label_set=label_set_train, tokens_per_batch=32
-)
+    num_labels = len(trainset.label_set.ids_to_label.values())
+    model_pretrained = BertForTokenClassification.from_pretrained(cfg.model.name,
+        num_labels=num_labels).to(DEVICE)
+    model_pretrained.config.id2label = label_set_train["ids_to_label"]
+    model_pretrained.config.label2id = label_set_train["labels_to_id"]
+    optimizer = AdamW(model_pretrained.parameters(), lr=cfg.hyperparams.learning_rate)
 
-model_pretrained = BertForTokenClassification.from_pretrained("dmis-lab/biobert-base-cased-v1.1", num_labels=len(trainset.label_set.ids_to_label.values())).to(DEVICE)
-model_pretrained.config.id2label = label_set_train["ids_to_label"]
-model_pretrained.config.label2id = label_set_train["labels_to_id"]
-num_labels = len(label_set_train["ids_to_label"])
-optimizer = AdamW(model_pretrained.parameters(), lr=LR)
+    trainloader = DataLoader(
+        trainset,
+        collate_fn=TraingingBatch,
+        batch_size=cfg.hyperparams.batch_size,
+        shuffle=cfg.hyperparams.shuffle
+    )
 
-trainloader = DataLoader(
-    trainset,
-    collate_fn=TraingingBatch,
-    batch_size=BATCH_SIZE,
-    shuffle=SHUFFLE
-)
+    testloader = DataLoader(
+        testset,
+        collate_fn=TraingingBatch,
+        batch_size=cfg.hyperparams.batch_size,
+        shuffle=cfg.hyperparams.shuffle
+    )
 
-testloader = DataLoader(
-    testset,
-    collate_fn=TraingingBatch,
-    batch_size=BATCH_SIZE,
-    shuffle=SHUFFLE
-)
+    # Modeling
+    model_finetuned = train(cfg=cfg, model=model_pretrained, dataloader=trainloader, labelset=label_set_train, optimizer=optimizer,
+        bilu_mappings=bilu_mappings, save_directory=cfg.caching.finetuned_ner_model)
 
-# Modeling
-model_finetuned = train(model=model_pretrained, dataloader=trainloader, optimizer=optimizer,
-    epochs=EPOCHS, bilu=False, tensorboard_logs=PATH_TENSORBOARD_LOGS, save_directory=PATH_FINEDTUNED_MODEL)
+    # Evaluation
+    evaluate(cfg=cfg, model=model_finetuned, dataloader=testloader, labelset=label_set_train, bilu_mappings=bilu_mappings,
+        save_directory=cfg.caching.finetuned_ner_metrics)
 
-# Evaluation
-evaluate(model=model_finetuned, dataloader=testloader, bilu=False)
+if __name__ == "__main__":
+    main()
 
-
-
-#TODO: add hydra
 #TODO: extract predictions and add to output file incl. input incl/exl. criteria
-# %%

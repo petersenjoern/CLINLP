@@ -1,0 +1,22 @@
+model:
+  name: dmis-lab/biobert-base-cased-v1.1
+  evaluation:
+    bilu: false
+
+hyperparams:
+  tokens_per_batch: 32
+  batch_size: 256
+  epochs: 2
+  learning_rate: 5e-6
+  shuffle: True
+
+datasets:
+  train: ./data/ner/train_processed_medical_ner.tsv
+  test: ./data/ner/test_processed_medical_ner.tsv
+
+# these directories will be available due to hydra under outputs/yyyy-mm-dd/id
+caching:
+  tensorboard_profiler: gpu/
+  tensorboard_metrics: metrics/
+  finetuned_ner_model: model/
+  finetuned_ner_metrics: model/evaluation_metrics.json
