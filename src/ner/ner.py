@@ -70,7 +70,8 @@ def train(cfg: DictConfig, model: BertForTokenClassification, optimizer: optimiz
                     batch_true_values, batch_pred_values = prepare_batch_for_metrics(batch=batch, predictions=outputs[1])
                     epoch_true_sample_values.extend(batch_true_values)
                     epoch_pred_sample_values.extend(batch_pred_values)
-                
+
+
                 # pytorch profiler needs to be notified at each steps end
                 prof.step() 
 
@@ -84,7 +85,7 @@ def train(cfg: DictConfig, model: BertForTokenClassification, optimizer: optimiz
                 bilu_mappings.non_bilu_label_to_bilu_ids,
                 bilu_mappings.non_bilu_label_to_id,
                 labelset,
-                cfg.model.evaluation.bilu
+                cfg.model.evaluation.remove_bilu
             )
             # Log the metrics to every epoch
             tb.add_scalar("Loss", loss.item(), epoch)
@@ -145,7 +146,7 @@ def evaluate(cfg: DictConfig, model: BertForTokenClassification, dataloader: Dat
         bilu_mappings.non_bilu_label_to_bilu_ids,
         bilu_mappings.non_bilu_label_to_id,
         labelset,
-        cfg.model.evaluation.bilu
+        cfg.model.evaluation.remove_bilu
     )
     if save_directory:
         with open(save_directory, 'w') as outfile:
@@ -210,5 +211,4 @@ def main(cfg: DictConfig) -> None:
 if __name__ == "__main__":
     main()
 
-#TODO investigate why BILU isnt removed in evaluation
 #TODO: extract predictions and add to output file incl. input incl/exl. criteria
