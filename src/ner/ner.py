@@ -197,7 +197,7 @@ def main(cfg: DictConfig) -> None:
         testset,
         collate_fn=TraingingBatch,
         batch_size=cfg.hyperparams.batch_size,
-        shuffle=cfg.hyperparams.shuffle
+        shuffle=False
     )
 
     # Modeling
