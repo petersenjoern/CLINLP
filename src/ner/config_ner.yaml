@@ -6,7 +6,7 @@ model:
 hyperparams:
   tokens_per_batch: 32
   batch_size: 256
-  epochs: 20
+  epochs: 23
   learning_rate: 5e-6
   shuffle: True
 

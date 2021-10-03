@@ -218,12 +218,12 @@ def remove_bilu_ids_from_true_and_pred_values(non_bilu_label_to_bilu_ids: Dict[i
     for idx, label in enumerate(true_values):
         for _, (labels_list, non_bilu_label) in non_bilu_label_to_bilu_ids.items():
             if label in labels_list:
-                true_values[idx] = non_bilu_label
+                true_values[idx] = int(non_bilu_label)
     
     for idx, label in enumerate(pred_values):
         for _, (labels_list, non_bilu_label) in non_bilu_label_to_bilu_ids.items():
             if label in labels_list:
-                pred_values[idx] = non_bilu_label
+                pred_values[idx] = int(non_bilu_label)
 
     return true_values, pred_values
 
@@ -234,8 +234,8 @@ def get_multilabel_metrics(true_values: List[int], pred_values: List[int],
     """Create a classification report for all labels in the dataset"""
     
     if remove_bilu:
-        labels = list(non_bilu_label_to_id.keys())
-        target_names = list(non_bilu_label_to_id.values())
+        labels = list(non_bilu_label_to_id.values())
+        target_names = list(non_bilu_label_to_id.keys())
         true_values, pred_values = remove_bilu_ids_from_true_and_pred_values(non_bilu_label_to_bilu_ids, true_values, pred_values)
     else:
         labels = list(labelset["ids_to_label"].keys())
